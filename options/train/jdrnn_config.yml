@@ -1,0 +1,167 @@
+# general settings
+name: MFAM
+model_type: JDRNNModel
+num_gpu: 2  # set num_gpu: 0 for cpu mode
+manual_seed: 10
+dist: true
+find_unused_parameters: true
+
+# dataset and data loader settings
+datasets:
+  train:
+    name: ITS
+    type: JDRNNITSDataset
+    dataroot: ~
+    json: /mnt/data/zhajunwei/JDRNN/metadata/RESIDE-STANDARD-ITS-TRAIN.json
+    mean: ~
+    std: ~
+    random_crop: 240
+    io_backend:
+      type: disk
+
+    # data loader
+    use_shuffle: true
+    num_worker_per_gpu: 8
+    batch_size_per_gpu: 100
+    dataset_enlarge_ratio: 1
+    prefetch_mode: ~
+    pin_memory: true
+  val:
+    name: ITS
+    type: JDRNNITSDataset
+    dataroot: ~
+    json: /mnt/data/zhajunwei/JDRNN/metadata/RESIDE-STANDARD-ITS-VAL.json
+    mean: ~
+    std: ~
+    io_backend:
+      type: disk
+    batch_size_per_gpu: 50
+    pin_memory: true
+    num_worker_per_gpu: 8
+    center_size: ~
+
+# network structures
+network_g:
+  type: JDRNN
+  midplanes: 32
+  block_num: [3]
+  scales: [1, 2, 3]
+  bridge_planes: ~
+  iter_num: 1
+#  pos_dim: 20
+#  depth_level: 32
+
+# path
+path:
+  pretrain_network_g: ~
+  strict_load_g: true
+  resume_state: /mnt/data/zhajunwei/JDRNN2/experiments/MFAM/training_states/4240.state
+  experiments_root: ./experiments
+
+# training settings
+train:
+  optim_g:
+    type: Adam
+    lr: !!float 1e-3
+    weight_decay: 0
+    betas: [0.9, 0.99]
+
+  scheduler:
+    type: StepLR
+    step_size: 6360
+    gamma: 0.5
+#    type: ReduceLROnPlateau
+#    mode: 'min'
+#    factor: 0.5
+#    patience: 294
+#    threshold: 0.001
+#    threshold_mode: 'rel'
+#    eps: !!float 1e-6
+
+  total_iter: 12800
+  warmup_iter: -1  # no warm up
+  only_y_channel: true
+
+  # losses
+  l1_loss:
+    type: L1Loss
+    loss_weight: 0
+    reduction: mean
+
+  l2_loss:
+    type: MSELoss
+    loss_weight: 0
+
+  smooth_l1_loss:
+    type: SmoothL1Loss
+    loss_weight: 1.0
+    reduction: mean
+
+#  perceptual_loss:
+#    type: PerceptualLoss
+#    loss_weight: 0.04
+#    reduction: mean
+
+  ssim_loss:
+    type: SSIMLoss
+    loss_weight: 0
+
+  mc_loss:
+    type: MCLoss
+    loss_weight: 1
+    win_size: 11
+
+#  pix_opt:
+#    type: L1Loss
+#    loss_weight: 1.0
+#    reduction: mean
+#
+#  flow_opt:
+#    type: L1Loss
+#    loss_weight: 0.01
+#    reduction: mean
+#
+#  census_opt:
+#    type: CensusLoss
+#    loss_weight: 0.01
+#
+  perceptual_loss:
+    type: PerceptualLoss
+    layer_weights:
+      'relu1_2': 1
+      'relu2_2': 1
+      'relu3_3': 1
+      'relu4_3': 1
+    vgg_type: vgg16
+    use_input_norm: false
+    range_norm: false
+    perceptual_weight: 0
+    style_weight: 0
+    criterion: l1
+
+  loss_iter_decay: 0.8
+
+# validation settings
+val:
+  val_freq: !!float 1280
+  save_img: true
+
+
+  metrics:
+    psnr: # metric name, can be arbitrary
+      type: PSNR_TENSOR
+      data_range: 1
+
+# logging settings
+logger:
+  print_freq: 560
+  save_checkpoint_freq: !!float 560
+  use_tb_logger: true
+  wandb:
+    project: ~
+    resume_id: ~
+
+# dist training settings
+dist_params:
+  backend: nccl
+  port: 29500

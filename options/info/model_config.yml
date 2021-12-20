@@ -1,0 +1,44 @@
+
+#network_g:
+#  type: JDRNN
+#  midplanes: 32
+#  block_num: [3, 3, 3]
+#  bridge_planes: [16, 16, 16]
+#  iter_num: 1
+#  resume_state: ~
+#  input_shape: [1, 3, 256, 256]
+
+network_g:
+  type: ToyNet
+  midplanes: 16
+  iter_num: 1
+  pos_dim: 8
+  resume_state: ~
+  input_shape: [1, 3, 256, 256]
+
+#network_g:
+#  type: GridDehazeNet
+#  in_channels: 3
+#  resume_state: ~
+#  input_shape: [1, 3, 256, 256]
+
+
+#network_g:
+#  type: AODnet
+#  resume_state: ~
+#  input_shape: [1, 3, 256, 256]
+
+#network_g:
+#  type: MSBDN
+#  resume_state: ~
+#  input_shape: [1, 3, 256, 256]
+
+#network_g:
+#  type: FFA
+#  resume_state: ~
+#  input_shape: [1, 3, 256, 256]
+
+iters: 100
+centerCrop: [150, 150]
+savePath: temp.png
+

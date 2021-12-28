@@ -5,29 +5,26 @@ from collections import OrderedDict
 from copy import deepcopy
 from os import path as osp
 from tqdm import tqdm
-import numbers
 import torch
-import torch.nn as nn
 import torch.distributed as dist
 import torch.nn.functional as F
+import torchvision
 from models.archs import define_network
 from models.base_model import BaseModel
-from models.losses import *
-from utils.logger import get_root_logger
-from utils.img_utils import imwrite, tensor2img
-from utils.dist_utils import master_only
-import numpy as np
-
+from core_utils.losses import *
+from core_utils.utils.logger import get_root_logger
+from core_utils.utils.dist_utils import master_only
+import time
 
 """
-User module
+User module 
 """
 
-loss_module = importlib.import_module('models.losses')
-metric_module = importlib.import_module('metrics')
+loss_module = importlib.import_module('core_utils.losses')
+metric_module = importlib.import_module('core_utils.metrics')
 
 
-class SIHRModel(BaseModel):
+class JDRNNModel(BaseModel):
     """Base interpolation model for novel view synthesis."""
 
     def __init__(self, opt):
@@ -36,8 +33,10 @@ class SIHRModel(BaseModel):
         # define network
         self.net_g = define_network(deepcopy(opt['network_g']))
         self.net_g = self.model_to_device(self.net_g)
-        total_param = sum(p.numel() for p in self.net_g.parameters() if p.requires_grad) * 4 / 1024 / 1024
-        print("Model size:", total_param)
+        total_param = sum(p.numel() for p in self.net_g.parameters() if p.requires_grad) / 1024 / 1024
+        # print("Model size :", total_param)
+        logger = get_root_logger()
+        logger.info("**************Module size (bumber)**************\n{}".format(total_param))
         self.print_network(self.net_g)
 
         self.cri_pix = None
@@ -53,9 +52,14 @@ class SIHRModel(BaseModel):
         self.log_dict = None
         self.metric_results = None
         # H, W = opt['datasets']['train']['resize_h'], opt['datasets']['train']['resize_w']
+        # discriminate the phase
+        self.phase = 'train' if 'train' in self.opt['datasets'] else 'val'
+        self.prior_metric = self.opt['val'].get('prior_metric', None)
 
         # load pretrained models
         load_path = self.opt['path'].get('pretrain_network_g', None)
+        self.iter_num = self.opt['network_g'].get('iter_num', None)
+        self.loss_iter_decay = self.opt['train'].get('loss_iter_decay', None)
         if load_path is not None:
             self.load_network(self.net_g, load_path,
                               self.opt['path'].get('strict_load_g', True))
@@ -92,6 +96,9 @@ class SIHRModel(BaseModel):
             loss_type = train_opt['mc_loss'].pop('type')
             self.mc_loss = getattr(loss_module, loss_type)(**train_opt['mc_loss']).to(self.device)
 
+        if train_opt.get('gradient_penalty_loss'):
+            loss_type = train_opt['gradient_penalty_loss'].pop('type')
+            self.gradient_penalty_loss = getattr(loss_module, loss_type)(**train_opt['gradient_penalty_loss']).to(self.device)
 
         # set up optimizers and schedulers
         self.setup_optimizers()
@@ -123,41 +130,65 @@ class SIHRModel(BaseModel):
         self.optimizers.append(self.optimizer_g)
 
     def feed_data(self, data):
+        #
+        # move_time = time.time()
         self.haze = data['haze'].to(self.device)
         self.clear = data['clear'].to(self.device)
-
+        # move_time = time.time() - move_time
+        # logger = get_root_logger()
+        # logger.info("move_time: {}".format(move_time))
 
     def optimize_parameters(self, current_iter):
 
         self.optimizer_g.zero_grad()
 
-        self.output = self.net_g(self.haze)
+        with torch.autograd.set_detect_anomaly(False):
+            self.haze.requires_grad_(True)
+            self.output = self.net_g(self.haze)
 
-        # loss_dict = OrderedDict()
 
-        loss_exp_dict = self.loss_fn(self.output)
-        loss_dict = loss_exp_dict
+            loss_exp_dict = self.loss_fn(self.output)
 
-        l_total = loss_exp_dict['loss_total']
-        l_total.backward()
-        # torch.nn.utils.clip_grad_norm_(self.net_g.parameters(), 0.1)
-        self.optimizer_g.step()
-        self.log_dict = self.reduce_loss_dict(loss_dict)
+            l_total = loss_exp_dict['loss_total']
+            l_total.backward()
+            # torch.nn.utils.clip_grad_norm_(self.net_g.parameters(), 0.1)
+            self.optimizer_g.step()
+            self.log_dict = self.reduce_loss_dict(loss_exp_dict)
+
+
         return l_total
 
     def loss_fn(self, output):
-        dehazed = output['dehazed']
 
-        loss_l1 = self.l1_loss(dehazed, self.clear)
-        loss_l2 = self.l2_loss(dehazed, self.clear)
-        loss_smooth_l1 = self.smooth_l1_loss(dehazed, self.clear)
-        loss_per = self.perceputal_loss(dehazed, self.clear)[0]
-        loss_ssim = self.ssim_loss(dehazed, self.clear)
-        loss_mc = self.mc_loss(dehazed, self.clear)
+        loss_l1 = 0
+        loss_l2 = 0
+        loss_smooth_l1 = 0
+        loss_per = 0
+        loss_ssim = 0
+        loss_mc = 0
+        gradient_penalty_loss = 0
+
+        loss_decays = [self.loss_iter_decay ** (self.iter_num - i - 1) for i in range(self.iter_num)]
+        loss_decays = [i / sum(loss_decays) for i in loss_decays]
+
+
+        for i in range(self.iter_num):
+            loss_decay = loss_decays[i]
+            dehazed = output['dehazed'][i]
+            loss_l1 += self.l1_loss(dehazed, self.clear) * loss_decay
+            loss_l2 += self.l2_loss(dehazed, self.clear) * loss_decay
+            temp = self.smooth_l1_loss(dehazed, self.clear) * loss_decay
+            loss_smooth_l1 += temp
+            loss_per_temp = self.perceputal_loss(dehazed, self.clear)[0]
+            gradient_penalty_loss += self.gradient_penalty_loss(temp, self.haze)
+            if loss_per_temp:
+                loss_per += loss_per_temp * loss_decay
+            loss_ssim += self.ssim_loss(dehazed, self.clear) * loss_decay
+            loss_mc += self.mc_loss(dehazed, self.clear) * loss_decay
 
         # pdb.set_trace()
         if loss_per:
-            loss_total = loss_l1 + loss_l2 + loss_smooth_l1 + loss_ssim + loss_mc + loss_per
+            loss_total = loss_l1 + loss_l2 + loss_smooth_l1 + loss_ssim + loss_mc + loss_per + gradient_penalty_loss
             loss_exp_dict = {
                 'loss_l1': loss_l1,
                 'loss_mse': loss_l2,
@@ -165,17 +196,19 @@ class SIHRModel(BaseModel):
                 'loss_per': loss_per,
                 'loss_ssim': loss_ssim,
                 'loss_mc': loss_mc,
+                'loss_gradient_penalty': gradient_penalty_loss,
                 'loss_total': loss_total
 
             }
         else:
-            loss_total = loss_l1 + loss_l2 + loss_smooth_l1 + loss_ssim + loss_mc
+            loss_total = loss_l1 + loss_l2 + loss_smooth_l1 + loss_ssim + loss_mc + gradient_penalty_loss
             loss_exp_dict = {
                 'loss_l1': loss_l1,
                 'loss_mse': loss_l2,
                 'loss_smooth_l1': loss_smooth_l1,
                 'loss_ssim': loss_ssim,
                 'loss_mc': loss_mc,
+                'loss_gradient_penalty': gradient_penalty_loss,
                 'loss_total': loss_total
 
             }
@@ -206,13 +239,23 @@ class SIHRModel(BaseModel):
                 dist.all_reduce(result,
                                 op=dist.ReduceOp.SUM)
                 self.metric_results[metric] = (result / test_num_sum).item()
+                if self.prior_metric is not None and metric == self.prior_metric:
+                    if hasattr(self, 'maximum' + '_' + metric):
+                        extremum = getattr(self, 'maximum' + '_' + metric)
+                    else:
+                        extremum = - float('inf')
+                    if extremum < self.metric_results[metric]:
+                        extremum = self.metric_results[metric]
+                        setattr(self, 'maximum' + '_' + metric, extremum)
+                        self.save(-2, -2)
+                        logger = get_root_logger()
+                        logger.info("Best {}: {} at iter: {}".format(metric, extremum, current_iter))
             self._log_validation_metric_values(current_iter, dataset_name,
                                                tb_logger)
 
     @master_only
     def nondist_validation(self, dataloader, current_iter, tb_logger,
                            save_img):
-        pdb.set_trace()
         with_metrics, metric_results, test_num = \
             self.core_validation(dataloader, current_iter, tb_logger,
                                  save_img)
@@ -221,11 +264,24 @@ class SIHRModel(BaseModel):
             dataset_name = dataloader.dataset.opt['name']
             for metric in metric_results.keys():
                 self.metric_results[metric] = metric_results[metric] / test_num
+                if self.prior_metric is not None and metric == self.prior_metric:
+                    if hasattr(self, 'maximum' + '_' + metric):
+                        extremum = getattr(self, 'maximum' + '_' + metric)
+                    else:
+                        extremum = - float('inf')
+                    if extremum < self.metric_results[metric]:
+                        extremum = self.metric_results[metric]
+                        setattr(self, 'maximum' + '_' + metric, extremum)
+                        self.save(-2, -2)
+                        logger = get_root_logger()
+                        logger.info("Best {}: {} at iter: {}".format(metric, extremum, current_iter))
             self._log_validation_metric_values(current_iter, dataset_name,
                                                tb_logger)
 
     def core_validation(self, dataloader, current_iter,
                         tb_logger, save_img):
+
+        start_time = time.time()
         test_num = 0
         dataset_name = dataloader.dataset.opt['name']
         with_metrics = self.opt['val'].get('metrics') is not None
@@ -233,52 +289,60 @@ class SIHRModel(BaseModel):
             metric: 0
             for metric in self.opt['val']['metrics'].keys()
         }
-
+        N = len(dataloader)
+        set_ = set(range(0, N, int(N/10) if N > 10 else 1))
         if self.opt['rank'] == 0:
             pbar = tqdm(total=len(dataloader), unit='image')
 
-        set_ = set(range(0, len(dataloader), int(len(dataloader)/10)))
         for idx, val_data in enumerate(dataloader):
             img_names = [osp.splitext(osp.basename(name))[0]
                          for name in val_data['name']]
             test_num += len(img_names)
             self.feed_data(val_data)
-            visuals = self.get_current_visuals()
-            haze_imgs = []
-            clear_imgs = []
-            dehazed_imgs = []
-            for batch_index in range(len(img_names)):
-                haze_imgs.append(tensor2img([visuals['haze'][batch_index]]))
-                clear_imgs.append(tensor2img([visuals['clear'][batch_index]]))
-                dehazed_imgs.append(tensor2img([visuals['dehazed'][batch_index]]))
 
-            # del self.haze
-            # del self.clear
+            #log time consume
+            data_time = time.time() - start_time
+
+            visuals = self.get_current_visuals()
+            #log prediction time consume
+            pred_time = time.time() - data_time - start_time
+
+
+            img_name = img_names[0]
+            haze_img = visuals['haze'][0]
+            clear_img = visuals['clear'][0]
+            dehazed_img = visuals['dehazed'][0]
+
             torch.cuda.empty_cache()
 
             if save_img:
-                for haze_img, clear_img, dehazed_img, img_name in zip(haze_imgs, clear_imgs, dehazed_imgs, img_names):
-                    if self.opt['is_train']:
-                        base_path = osp.join(self.opt['path']['visualization'], img_name)
-                    elif self.opt['val']['suffix']:
-                        base_path = osp.join(self.opt['path']['visualization'],
-                                             dataset_name,
-                                             img_name + '_' + self.opt["val"]["suffix"])
-                    else:
-                        base_path = osp.join(self.opt['path']['visualization'],
-                                             dataset_name,
-                                             img_name)
-                    # haze_img_path = base_path + '_img_haze.png'
-                    # clear_img_path = base_path + '_img_clear.png'
-                    dehazed_img_path = base_path + '.png'
+                if self.opt['is_train']:
+                    base_path = osp.join(self.opt['path']['visualization'], img_name)
+                elif self.opt['val']['suffix']:
+                    base_path = osp.join(self.opt['path']['visualization'],
+                                         dataset_name,
+                                         img_name + '_' + self.opt["val"]["suffix"])
+                else:
+                    base_path = osp.join(self.opt['path']['visualization'],
+                                         dataset_name,
+                                         img_name)
+                dehazed_img_path = base_path + '.png'
 
-                    # imwrite(haze_img, haze_img_path)
-                    # imwrite(clear_img, clear_img_path)
-                    imwrite(dehazed_img, dehazed_img_path)
+                if self.phase == 'train':
+                    if idx in set_ and tb_logger:
+                        tb_img = torch.cat((haze_img, dehazed_img, clear_img), dim=-1)
+                        # tb_img = tb_img * 0.5 + 0.5
+                        tb_img = torch.clamp(tb_img, 0, 1)
+                        tb_logger.add_image(base_path, tb_img, global_step=current_iter, dataformats='CHW')
+                else:
+                    # dehazed_img = dehazed_img * 0.5 + 0.5
+                    dehazed_img = torch.clamp(dehazed_img, 0, 1)
+                    torchvision.utils.save_image(dehazed_img, dehazed_img_path)
+                    # io.imsave(dehazed_img_path, dehazed_img)
 
-                    if idx in set_:
-                        tb_img = np.concatenate((haze_img, dehazed_img, clear_img), axis=1)
-                        tb_logger.add_image(base_path, tb_img, dataformats='HWC')
+
+            #log visualization consume
+            vis_time = time.time() - start_time - pred_time - data_time
 
 
             if with_metrics:
@@ -287,17 +351,25 @@ class SIHRModel(BaseModel):
                 for name, opt_ in opt_metric.items():
                     metric_type = opt_.pop('type')
                     for img_index in range(len(img_names)):
-                        img_out = F.relu(self.output['dehazed'])
+                        img_out = F.relu(self.output['dehazed'][-1])
                         img_gt = self.clear
                         img_name = img_names[img_index]
                         metric_results[name] += getattr(
                             metric_module, metric_type)(**opt_)(img_out, img_gt)
                         if self.opt['rank'] == 0:
                             pbar.set_description(f'Test {img_name}')
+
+            #log metric consume
+            metric_time = time.time() - start_time - data_time - pred_time - vis_time
+            cost_time = {'data_time': data_time, 'pred_time': pred_time, 'vis_time': vis_time, 'metric_time': metric_time}
+            logger = get_root_logger()
+            logger.info(repr(cost_time))
+            start_time = time.time()
             if self.opt['rank'] == 0:
                 pbar.update(1)
         if self.opt['rank'] == 0:
             pbar.close()
+
         return with_metrics, metric_results, test_num
 
     @master_only
@@ -317,7 +389,7 @@ class SIHRModel(BaseModel):
         out_dict = OrderedDict()
         out_dict['haze'] = self.haze.detach().cpu()
         out_dict['clear'] = self.clear.detach().cpu()
-        out_dict['dehazed'] = self.output['dehazed'].detach().cpu()
+        out_dict['dehazed'] = self.output['dehazed'][-1].detach().cpu()
 
         return out_dict
 

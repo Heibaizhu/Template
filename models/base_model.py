@@ -10,8 +10,8 @@ from torch.nn.parallel import DataParallel, DistributedDataParallel
 import torch.nn as nn
 import torch.optim.lr_scheduler as torch_lr_scheduler
 
-from utils.dist_utils import master_only
-import utils.lr_scheduler as lr_scheduler
+from core_utils.utils.dist_utils import master_only
+import core_utils.utils.lr_scheduler as lr_scheduler
 
 import torch.distributed as dist
 
@@ -188,7 +188,7 @@ class BaseModel:
         ]
 
     @master_only
-    def save_network(self, net, net_label, current_iter, param_key='params'):
+    def save_network(self, net, net_label, current_iter, best=False, param_key='params'):
         """Save networks.
 
         Args:
@@ -198,8 +198,11 @@ class BaseModel:
             param_key (str | list[str]): The parameter key(s) to save network.
                 Default: 'params'.
         """
-        if current_iter == -1:
+        if best:
+            current_iter = 'best'
+        elif current_iter == -1:
             current_iter = 'latest'
+
         save_filename = f'{net_label}_{current_iter}.pth'
         save_path = os.path.join(self.opt['path']['ckpts'], save_filename)
 
@@ -283,13 +286,14 @@ class BaseModel:
         net.load_state_dict(load_net, strict=strict)
 
     @master_only
-    def save_training_state(self, epoch, current_iter):
+    def save_training_state(self, epoch, current_iter, best=False):
         """Save training states during training, which will be used for
         resuming.
 
         Args:
             epoch (int): Current epoch.
             current_iter (int): Current iteration.
+            best (bool): The flag indicating whether this current_iter is best
         """
         if current_iter != -1:
             state = {
@@ -302,7 +306,10 @@ class BaseModel:
                 state['optimizers'].append(o.state_dict())
             for s in self.schedulers:
                 state['schedulers'].append(s.state_dict())
-            save_filename = f'{current_iter}.state'
+            if best:
+                save_filename = 'best.state'
+            else:
+                save_filename = f'{current_iter}.state'
             save_path = os.path.join(self.opt['path']['training_states'],
                                      save_filename)
             torch.save(state, save_path)

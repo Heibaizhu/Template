@@ -17,6 +17,7 @@ import torchvision.transforms as transforms
 import cv2
 import numbers
 from collections.abc import Sequence
+from .augmentation import Flip, Rotate, Compose
 
 def img2tensor(imgs, bgr2rgb=False, float32=True):
     """Numpy array to tensor.
@@ -107,6 +108,16 @@ class SIHRDataset(data.Dataset):
         self.datalist = self.get_datalist()
         self.center_size = opt.get('center_size', None)
         self.random_crop = opt.get('random_crop', None)
+        self.flip = opt.get('flip', None)
+        self.rotation = opt.get('rotation', None)
+        self.transforms_compose = []
+        if self.flip:
+            self.transforms_compose.append(Flip())
+        if self.rotation:
+            self.transforms_compose.append(Rotate())
+        if self.transforms_compose:
+            self.transforms_compose = Compose(self.transforms_compose)
+
         if self.random_crop is not None:
             self.transformer_random_crop = torchvision.transforms.RandomCrop(self.random_crop)
 
@@ -125,6 +136,9 @@ class SIHRDataset(data.Dataset):
 
         haze = io.imread(haze_path) / 255.
         clear = io.imread(clear_path) / 255.
+
+        if self.transforms_compose:
+            haze, clear = self.transforms_compose(haze, clear)
 
         assert haze.ndim == 3 and clear.ndim == 3, "The ndim of the input image is not 3!"
         haze = img2tensor(haze)

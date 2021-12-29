@@ -3,7 +3,7 @@
 import importlib
 import os.path as osp
 
-from utils.misc import scandir
+from core_utils.utils.misc import scandir
 
 # automatically scan and import arch modules
 # scan all the files under the 'archs' folder and collect files ending with

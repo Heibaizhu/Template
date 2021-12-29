@@ -11,9 +11,9 @@ import torch
 import torch.utils.data
 
 from data.data_sampler import EnlargedSampler
-from utils.misc import scandir
-from utils.logger import get_root_logger
-from utils.dist_utils import get_dist_info
+from core_utils.utils.misc import scandir
+from core_utils.utils.logger import get_root_logger
+from core_utils.utils.dist_utils import get_dist_info
 from data.prefetch_dataloader import PrefetchDataLoader
 from torch.utils.data import distributed
 

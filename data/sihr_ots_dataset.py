@@ -17,8 +17,8 @@ class SIHROTSDataset(SIHRDataset):
         hazes = meta_list['haze']
         clears = meta_list['clear']
         if self.dataroot is not None:
-            hazes = [os.path.join(self.dataroot, haze.partition('DEHAZEDATASET')[-1]) for haze in hazes]
-            hazes = [os.path.join(self.dataroot, clear.partition('DEHAZEDATASET')[-1]) for clear in clears]
+            hazes = [os.path.join(self.dataroot, haze) for haze in hazes]
+            clears = [os.path.join(self.dataroot, clear) for clear in clears]
         return list(zip(hazes, clears))
 
 

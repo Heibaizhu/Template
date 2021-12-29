@@ -8,7 +8,7 @@ from tqdm import tqdm
 import torch
 import torch.distributed as dist
 import torch.nn.functional as F
-import torchvision
+import torchvision8
 from models.archs import define_network
 from models.base_model import BaseModel
 from core_utils.losses import *

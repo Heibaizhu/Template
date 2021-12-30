@@ -3,9 +3,9 @@
 import importlib
 import os.path as osp
 
-from utils.misc import scandir
-from utils.logger import get_root_logger
-from utils.misc import check_resume
+from core_utils.utils.misc import scandir
+from core_utils.utils.logger import get_root_logger
+from core_utils.utils.misc import check_resume
 
 # automatically scan and import model modules
 # scan all the files under the 'models' folder and collect files ending with

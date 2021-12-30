@@ -116,7 +116,7 @@ class SIHRDataset(data.Dataset):
         if self.rotation:
             self.transforms_compose.append(Rotate())
         if self.transforms_compose:
-            self.transforms_compose = Compose(self.transforms_compose)
+            self.transforms_compose = Compose(*self.transforms_compose)
 
         if self.random_crop is not None:
             self.transformer_random_crop = torchvision.transforms.RandomCrop(self.random_crop)
@@ -141,6 +141,8 @@ class SIHRDataset(data.Dataset):
             haze, clear = self.transforms_compose(haze, clear)
 
         assert haze.ndim == 3 and clear.ndim == 3, "The ndim of the input image is not 3!"
+        haze = haze.astype(np.float32)
+        clear = clear.astype(np.float32)
         haze = img2tensor(haze)
         clear = img2tensor(clear)
 

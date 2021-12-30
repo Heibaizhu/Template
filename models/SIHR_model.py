@@ -24,7 +24,7 @@ loss_module = importlib.import_module('core_utils.losses')
 metric_module = importlib.import_module('core_utils.metrics')
 
 
-class JDRNNModel(BaseModel):
+class SIHRModel(BaseModel):
     """Base interpolation model for novel view synthesis."""
 
     def __init__(self, opt):

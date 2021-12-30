@@ -8,9 +8,10 @@ from tqdm import tqdm
 import torch
 import torch.distributed as dist
 import torch.nn.functional as F
-import torchvision8
+import torchvision
 from models.archs import define_network
 from models.base_model import BaseModel
+from models.SIHR_model import  SIHRModel
 from core_utils.losses import *
 from core_utils.utils.logger import get_root_logger
 from core_utils.utils.dist_utils import master_only
@@ -24,7 +25,7 @@ loss_module = importlib.import_module('core_utils.losses')
 metric_module = importlib.import_module('core_utils.metrics')
 
 
-class JDRNNModel(BaseModel):
+class JDRNNModel(SIHRModel):
     """Base interpolation model for novel view synthesis."""
 
     def __init__(self, opt):
@@ -33,20 +34,8 @@ class JDRNNModel(BaseModel):
         # define network
         self.net_g = define_network(deepcopy(opt['network_g']))
         self.net_g = self.model_to_device(self.net_g)
-        total_param = sum(p.numel() for p in self.net_g.parameters() if p.requires_grad) / 1024 / 1024
-        # print("Model size :", total_param)
-        logger = get_root_logger()
-        logger.info("**************Module size (bumber)**************\n{}".format(total_param))
-        self.print_network(self.net_g)
 
-        self.cri_pix = None
-        self.cri_census = None
-        self.cri_perceptual = None
-        self.img_l = None
-        self.img_r = None
 
-        self.flow = None
-        self.gt = None
         self.output = None
         self.optimizer_g = None
         self.log_dict = None
@@ -228,60 +217,6 @@ class JDRNNModel(BaseModel):
 
         self.net_g.train()
 
-    def dist_validation(self, dataloader, current_iter, tb_logger,
-                        save_img):
-        with_metrics, metric_results, test_num = \
-            self.core_validation(dataloader, current_iter, tb_logger,
-                                 save_img)
-        if with_metrics:
-            self.metric_results = {}
-            dataset_name = dataloader.dataset.opt['name']
-            test_num_sum = torch.tensor(test_num).to(self.device)
-            dist.all_reduce(test_num_sum,
-                            op=dist.ReduceOp.SUM)
-            for metric in metric_results.keys():
-                result = torch.tensor(metric_results[metric]).to(self.device)
-                dist.all_reduce(result,
-                                op=dist.ReduceOp.SUM)
-                self.metric_results[metric] = (result / test_num_sum).item()
-                if self.prior_metric is not None and metric == self.prior_metric:
-                    if hasattr(self, 'maximum' + '_' + metric):
-                        extremum = getattr(self, 'maximum' + '_' + metric)
-                    else:
-                        extremum = - float('inf')
-                    if extremum < self.metric_results[metric]:
-                        extremum = self.metric_results[metric]
-                        setattr(self, 'maximum' + '_' + metric, extremum)
-                        self.save(-2, -2)
-                        logger = get_root_logger()
-                        logger.info("Best {}: {} at iter: {}".format(metric, extremum, current_iter))
-            self._log_validation_metric_values(current_iter, dataset_name,
-                                               tb_logger)
-
-    @master_only
-    def nondist_validation(self, dataloader, current_iter, tb_logger,
-                           save_img):
-        with_metrics, metric_results, test_num = \
-            self.core_validation(dataloader, current_iter, tb_logger,
-                                 save_img)
-        if with_metrics:
-            self.metric_results = {}
-            dataset_name = dataloader.dataset.opt['name']
-            for metric in metric_results.keys():
-                self.metric_results[metric] = metric_results[metric] / test_num
-                if self.prior_metric is not None and metric == self.prior_metric:
-                    if hasattr(self, 'maximum' + '_' + metric):
-                        extremum = getattr(self, 'maximum' + '_' + metric)
-                    else:
-                        extremum = - float('inf')
-                    if extremum < self.metric_results[metric]:
-                        extremum = self.metric_results[metric]
-                        setattr(self, 'maximum' + '_' + metric, extremum)
-                        self.save(-2, -2)
-                        logger = get_root_logger()
-                        logger.info("Best {}: {} at iter: {}".format(metric, extremum, current_iter))
-            self._log_validation_metric_values(current_iter, dataset_name,
-                                               tb_logger)
 
     def core_validation(self, dataloader, current_iter,
                         tb_logger, save_img):
@@ -377,17 +312,6 @@ class JDRNNModel(BaseModel):
 
         return with_metrics, metric_results, test_num
 
-    @master_only
-    def _log_validation_metric_values(self, current_iter, dataset_name,
-                                      tb_logger):
-        log_str = f'Validation {dataset_name}\n'
-        for metric, value in self.metric_results.items():
-            log_str += f'\t # {metric}: {value:.4f}\n'
-        logger = get_root_logger()
-        logger.info(log_str)
-        if tb_logger:
-            for metric, value in self.metric_results.items():
-                tb_logger.add_scalar(f'metrics/{metric}', value, current_iter)
 
     def get_current_visuals(self):
         self.test()
@@ -397,8 +321,4 @@ class JDRNNModel(BaseModel):
         out_dict['dehazed'] = self.output['dehazed'][-1].detach().cpu()
 
         return out_dict
-
-    def save(self, epoch, current_iter):
-        self.save_network(self.net_g, 'net_g', current_iter)
-        self.save_training_state(epoch, current_iter)
 

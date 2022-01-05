@@ -149,7 +149,7 @@ class SIHRDataset(data.Dataset):
         ### transformation piplines
         if self.mean is not None or self.std is not None:
             normalize(haze, self.mean, self.std, inplace=True)
-            normalize(clear, self.mean, self.std, inplace=True)
+            # normalize(clear, self.mean, self.std, inplace=True)
 
         if self.center_size is not None:
             haze = TF.center_crop(haze, self.center_size)

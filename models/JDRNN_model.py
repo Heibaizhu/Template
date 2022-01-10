@@ -132,7 +132,6 @@ class JDRNNModel(SIHRModel):
         move_time = time.time()
         self.haze = data['haze'].to(self.device)
         self.clear = data['clear'].to(self.device)
-        self.depth = data['depth'].to(self.device)
         move_time = time.time() - move_time
         logger = get_root_logger()
         # logger.info("move_time: {}".format(move_time))

@@ -5,6 +5,7 @@ import os.path as osp
 
 from core_utils.utils.misc import scandir
 
+
 # automatically scan and import arch modules
 # scan all the files under the 'archs' folder and collect files ending with
 # '_arch.py'
@@ -44,5 +45,11 @@ def dynamic_instantiation(modules, cls_type, opt):
 
 def define_network(opt):
     network_type = opt.pop('type')
+    amp_flag = False
+    if opt.get('amp', None):
+        amp_flag = opt.pop('amp')
     net = dynamic_instantiation(_arch_modules, network_type, opt)
+    if amp_flag:
+        from torch.cuda.amp import autocast
+        net.forward = autocast()(net.forward)
     return net

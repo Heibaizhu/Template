@@ -16,6 +16,7 @@ from core_utils.losses import *
 from core_utils.utils.logger import get_root_logger
 from core_utils.utils.dist_utils import master_only
 import time
+from torch.cuda.amp import autocast, GradScaler
 
 """
 User module 
@@ -30,6 +31,14 @@ class JDRNNModel(SIHRModel):
 
     def __init__(self, opt):
         super().__init__(opt)
+
+        # amp or not
+
+        if self.amp:
+            self.scaler = GradScaler()
+            self.optimize_parameters = self.amp_optimize_parameters
+        else:
+            self.optimize_parameters = self.noamp_optimize_parameters
 
         # define network
         self.net_g = define_network(deepcopy(opt['network_g']))
@@ -128,16 +137,34 @@ class JDRNNModel(SIHRModel):
         logger = get_root_logger()
         # logger.info("move_time: {}".format(move_time))
 
-    def optimize_parameters(self, current_iter):
+    def amp_optimize_parameters(self, current_iter):
+        self.optimizer_g.zero_grad()
+
+        with torch.autograd.set_detect_anomaly(False):
+            with autocast():
+                self.output = self.net_g(self.haze)
+                loss_exp_dict = self.loss_fn(self.output)
+                l_total = loss_exp_dict['loss_total']
+            self.scaler.scale(l_total).backward()
+
+            # # Unscales the gradients of optimizer's assigned params in-place
+            # scaler.unscale_(optimizer)
+            # # Since the gradients of optimizer's assigned params are unscaled, clips as usual:
+            # torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm)
+
+            self.scaler.step(self.optimizer_g)
+            self.scaler.update()
+
+            self.log_dict = self.reduce_loss_dict(loss_exp_dict)
+
+        return l_total
+
+    def noamp_optimize_parameters(self, current_iter):
 
         self.optimizer_g.zero_grad()
 
         with torch.autograd.set_detect_anomaly(False):
-            self.haze.requires_grad_(True)
-            # logger = get_root_logger()
-            # self.tag = "conv7"
-            # self.net_g.conv7[0].weight.register_hook(self.hook_fn)
-            # self.net_g.log_grad(self.tb_logger)
+
             self.output = self.net_g(self.haze)
 
         # loss_dict = OrderedDict()
@@ -148,7 +175,6 @@ class JDRNNModel(SIHRModel):
             # torch.nn.utils.clip_grad_norm_(self.net_g.parameters(), 0.1)
             self.optimizer_g.step()
             self.log_dict = self.reduce_loss_dict(loss_exp_dict)
-
 
         return l_total
 

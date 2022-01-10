@@ -301,12 +301,13 @@ class JDRNNModel(SIHRModel):
 
             #log metric consume
             metric_time = time.time() - start_time - data_time - pred_time - vis_time
-            cost_time = {'data_time': data_time, 'pred_time': pred_time, 'vis_time': vis_time, 'metric_time': metric_time}
-            logger = get_root_logger()
-            logger.info(repr(cost_time))
             start_time = time.time()
             if self.opt['rank'] == 0:
                 pbar.update(1)
+
+        cost_time = {'data_time': data_time, 'pred_time': pred_time, 'vis_time': vis_time, 'metric_time': metric_time}
+        logger = get_root_logger()
+        logger.info(repr(cost_time))
         if self.opt['rank'] == 0:
             pbar.close()
 

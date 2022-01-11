@@ -114,8 +114,8 @@ def main():
                 log_vars.update({'time': iter_time, 'data_time': data_time})
                 log_vars.update(model.get_current_log())
                 msg_logger(log_vars)
-                image_visualizer(model.get_current_visuals(),
-                                 epoch)
+                # image_visualizer(model.get_current_visuals(),
+                #                  epoch)
 
             # save models and training states
             if current_iter % opt['logger']['save_checkpoint_freq'] == 0:

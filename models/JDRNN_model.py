@@ -62,6 +62,8 @@ class JDRNNModel(SIHRModel):
             self.load_network(self.net_g, load_path,
                               self.opt['path'].get('strict_load_g', True))
 
+        if self.is_train:
+            self.init_training_settings()
 
     def init_training_settings(self):
         self.net_g.train()

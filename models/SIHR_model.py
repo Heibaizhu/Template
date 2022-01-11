@@ -50,8 +50,7 @@ class SIHRModel(BaseModel):
 
         # load pretrained models
         load_path = self.opt['path'].get('pretrain_network_g', None)
-        self.iter_num = self.opt['network_g'].get('iter_num', None)
-        self.loss_iter_decay = self.opt['train'].get('loss_iter_decay', None)
+
         if load_path is not None:
             self.load_network(self.net_g, load_path,
                               self.opt['path'].get('strict_load_g', True))

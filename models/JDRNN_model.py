@@ -40,27 +40,16 @@ class JDRNNModel(SIHRModel):
         else:
             self.optimize_parameters = self.noamp_optimize_parameters
 
-        # define network
-        self.net_g = define_network(deepcopy(opt['network_g']))
-        self.net_g = self.model_to_device(self.net_g)
-
 
         self.output = None
         self.optimizer_g = None
         self.log_dict = None
         self.metric_results = None
-        # H, W = opt['datasets']['train']['resize_h'], opt['datasets']['train']['resize_w']
-        # discriminate the phase
-        self.phase = 'train' if 'train' in self.opt['datasets'] else 'val'
-        self.prior_metric = self.opt['val'].get('prior_metric', None)
 
-        # load pretrained models
-        load_path = self.opt['path'].get('pretrain_network_g', None)
+        #model hyperparameters
         self.iter_num = self.opt['network_g'].get('iter_num', None)
         self.loss_iter_decay = self.opt['train'].get('loss_iter_decay', None)
-        if load_path is not None:
-            self.load_network(self.net_g, load_path,
-                              self.opt['path'].get('strict_load_g', True))
+
 
         if self.is_train:
             self.init_training_settings()
@@ -187,23 +176,18 @@ class JDRNNModel(SIHRModel):
         loss_mc = 0
         gradient_penalty_loss = 0
 
-        loss_decays = [self.loss_iter_decay ** (self.iter_num - i - 1) for i in range(self.iter_num)]
-        loss_decays = [i / sum(loss_decays) for i in loss_decays]
+        dehazed = output['dehazed'][-1]
+        loss_l1 += self.l1_loss(dehazed, self.clear)
+        loss_l2 += self.l2_loss(dehazed, self.clear)
+        temp = self.smooth_l1_loss(dehazed, self.clear)
+        loss_smooth_l1 += temp
+        loss_per_temp = self.perceputal_loss(dehazed, self.clear)[0]
+        gradient_penalty_loss += self.gradient_penalty_loss(temp, self.haze)
+        if loss_per_temp:
+            loss_per += loss_per_temp * loss_decay
+        loss_ssim += self.ssim_loss(dehazed, self.clear)
+        loss_mc += self.mc_loss(dehazed, self.clear)
 
-
-        for i in range(self.iter_num):
-            loss_decay = loss_decays[i]
-            dehazed = output['dehazed'][i]
-            loss_l1 += self.l1_loss(dehazed, self.clear) * loss_decay
-            loss_l2 += self.l2_loss(dehazed, self.clear) * loss_decay
-            temp = self.smooth_l1_loss(dehazed, self.clear) * loss_decay
-            loss_smooth_l1 += temp
-            loss_per_temp = self.perceputal_loss(dehazed, self.clear)[0]
-            gradient_penalty_loss += self.gradient_penalty_loss(temp, self.haze)
-            if loss_per_temp:
-                loss_per += loss_per_temp * loss_decay
-            loss_ssim += self.ssim_loss(dehazed, self.clear) * loss_decay
-            loss_mc += self.mc_loss(dehazed, self.clear) * loss_decay
 
         # pdb.set_trace()
         if loss_per:

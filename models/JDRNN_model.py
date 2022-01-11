@@ -48,7 +48,6 @@ class JDRNNModel(SIHRModel):
 
         #model hyperparameters
         self.iter_num = self.opt['network_g'].get('iter_num', None)
-        self.loss_iter_decay = self.opt['train'].get('loss_iter_decay', None)
 
 
         if self.is_train:

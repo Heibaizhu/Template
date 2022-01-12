@@ -7,10 +7,10 @@ import pdb
 import torch
 from torch import autograd
 
-from utils.options import Options
-from utils.misc import load_resume_state, make_exp_dirs, check_resume
-from utils.logger import Logger
-from utils.visualizer import Visualizer
+from core_utils.utils.options import Options
+from core_utils.utils.misc import load_resume_state, make_exp_dirs, check_resume
+from core_utils.utils.logger import Logger
+from core_utils.utils.visualizer import Visualizer
 from data import create_train_val_dataloader
 from data.prefetch_dataloader import create_prefetch
 from models import create_model

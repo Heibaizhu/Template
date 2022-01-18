@@ -138,7 +138,7 @@ class MSCBlock(nn.Module):
         self.scales = scales
         self.blocks = nn.ModuleDict()
         for scale in scales:
-            self.blocks[str(scale)] = SCBlock(inplanes, midplanes, outplanes, scale=1, activation=activation, reduction=reduction)
+            self.blocks[str(scale)] = SCBlock(inplanes, midplanes, outplanes, scale=scale, activation=activation, reduction=reduction)
 
     def forward(self, x):
         res = x
